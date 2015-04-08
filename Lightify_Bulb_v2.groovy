@@ -147,7 +147,9 @@ def on() {
 def off() {
 	log.debug "off()"
 	sendEvent(name: "switch", value: "off")
-    
+	if(device.latestValue("level") < 99) { 
+    		sendEvent(name: "level", value: 100)
+	}    
 	"st cmd 0x${device.deviceNetworkId} ${endpointId} 6 0 {}"
  
 }
