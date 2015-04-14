@@ -22,12 +22,15 @@ metadata {
 		capability "Refresh"
 		capability "Switch"
 		capability "Switch Level"
+        capability "Polling"
         
         command "setColorTemp"
         
         attribute "colorTemp", "string"
 		attribute "kelvin", "string"
         attribute "bulbTemp", "string"
+        
+        attribute "unreachable", "number"
         
 		fingerprint profileId: "0104", inClusters: "0000,0003,0004,0005,0006,0008,0300,0B04,FC0F", outClusters: "0019"
 	}
@@ -80,6 +83,8 @@ def parse(String description) {
 	log.trace description
 	def msg = zigbee.parse(description)
     
+    sendEvent(name: 'unreachable', value: 0)
+    
     if (description?.startsWith("catchall:")) {
 		
 		log.trace msg
@@ -101,8 +106,8 @@ def parse(String description) {
 	}
     
     
-   if (description?.startsWith("read attr")) {
-   	
+	if (description?.startsWith("read attr")) {
+    
         Map descMap = (description - "read attr - ").split(",").inject([:]) { map, param ->
 		def nameAndValue = param.split(":")
 		map += [(nameAndValue[0].trim()):nameAndValue[1].trim()]
@@ -113,16 +118,12 @@ def parse(String description) {
         switch (descMap.cluster) {
         
         	case "0008":
-            
-        		log.debug description[-2..-1]
         		def i = Math.round(convertHexToInt(descMap.value) / 256 * 100 )
         		sendEvent( name: "level", value: i )
-                sendEvent( name: "switch.setLevel", value: i) //added to help subscribers
-                break
+                def result = sendEvent( name: "switch.setLevel", value: i) //added to help subscribers
+                return result
                 
-         	case "0300":
-            
-            	log.debug descMap.value               
+         	case "0300":           
                 def i = Math.round( 1000000 / convertHexToInt(descMap.value))
                	def j = i
                 def bTemp = getBulbTemp(j)
@@ -147,14 +148,28 @@ def on() {
 def off() {
 	log.debug "off()"
 	sendEvent(name: "switch", value: "off")
-	if(device.latestValue("level") < 99) { 
-    		sendEvent(name: "level", value: 100)
-	}    
+    if(device.latestValue("level") < 99) { 
+   		sendEvent(name: "level", value: 100)
+	}  
 	"st cmd 0x${device.deviceNetworkId} ${endpointId} 6 0 {}"
  
 }
 
 def refresh() {
+    
+
+    def unreachable = device.latestValue("unreachable")
+    if(unreachable == null) { 
+    	sendEvent(name: 'unreachable', value: 1)
+    }
+    else { 
+    	sendEvent(name: 'unreachable', value: unreachable + 1)
+    }
+    
+    log.debug "UNREACHABLEREF: $unreachable ";
+    if(unreachable > 2) { 
+    	sendEvent(name: "switch", value: "off")
+    }
     
     [
 	"st rattr 0x${device.deviceNetworkId} ${endpointId} 6 0", "delay 500",
@@ -163,9 +178,27 @@ def refresh() {
     ]
 }
 
+def poll() {
+	refresh() 
+}
+
+
 def setLevel(value) {
 	log.trace "setLevel($value)"
 	def cmds = []
+
+    def unreachable = device.latestValue("unreachable")
+    if(unreachable == null) { 
+    	sendEvent(name: 'unreachable', value: 1)
+    }
+    else { 
+    	sendEvent(name: 'unreachable', value: unreachable + 1)
+    }
+    
+    log.debug "UNREACHABLELEV: $unreachable ";
+    if(unreachable > 2) { 
+    	sendEvent(name: "switch", value: "off")
+    }
 
 	if (value == 0) {
 		sendEvent(name: "switch", value: "off")
@@ -175,11 +208,13 @@ def setLevel(value) {
 		sendEvent(name: "switch", value: "on")
 	}
 
+
 	sendEvent(name: "level", value: value)
 	def level = sprintf("%02d",Math.round(value * 255 / 100))
+    if(value == 1) { level = "01" }
 	cmds << "st cmd 0x${device.deviceNetworkId} ${endpointId} 8 4 {${level} 1500}"
 
-	//log.debug cmds
+	log.debug cmds
 	cmds
 }
 
@@ -187,7 +222,18 @@ def setColorTemp(value) {
 	
     log.trace "setColorTemp($value)"
     
-
+    def unreachable = device.latestValue("unreachable")
+    if(unreachable == null) { 
+    	sendEvent(name: 'unreachable', value: 1)
+    }
+    else { 
+    	sendEvent(name: 'unreachable', value: unreachable + 1)
+    }
+    
+    log.debug "UNREACHABLECT: $unreachable ";
+    if(unreachable > 2) { 
+    	sendEvent(name: "switch", value: "off")
+    }
     
    	def degrees = Math.round(value)
     if (degrees < 2700) { degrees = 2700 }
@@ -202,6 +248,8 @@ def setColorTemp(value) {
 	sendEvent(name: "colorTemp", value: value)
     sendEvent(name: "kelvin", value: degrees)
     sendEvent( name: "bulbTemp", value: bTemp)
+    
+
     
 	def levelC = swapEndianHex(hexSixteen(1000000/degrees))
     
